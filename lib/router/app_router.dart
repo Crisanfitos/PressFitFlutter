@@ -22,6 +22,8 @@ import 'package:pressfit/screens/profile/profile_screen.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
 final _weeklyNavigatorKey = GlobalKey<NavigatorState>();
+final _progressNavigatorKey = GlobalKey<NavigatorState>();
+final _profileNavigatorKey = GlobalKey<NavigatorState>();
 
 GoRouter createRouter(AuthProvider authProvider) {
   return GoRouter(
@@ -107,6 +109,7 @@ GoRouter createRouter(AuthProvider authProvider) {
           ),
           // Tab 2: Progress
           StatefulShellBranch(
+            navigatorKey: _progressNavigatorKey,
             routes: [
               GoRoute(
                 path: '/progress',
@@ -131,6 +134,7 @@ GoRouter createRouter(AuthProvider authProvider) {
           ),
           // Tab 3: Profile
           StatefulShellBranch(
+            navigatorKey: _profileNavigatorKey,
             routes: [
               GoRoute(
                 path: '/profile',

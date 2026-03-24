@@ -5,6 +5,7 @@ import 'package:pressfit/config/supabase_config.dart';
 import 'package:pressfit/theme/app_theme.dart';
 import 'package:pressfit/providers/theme_provider.dart';
 import 'package:pressfit/providers/auth_provider.dart';
+import 'package:go_router/go_router.dart';
 import 'package:pressfit/router/app_router.dart';
 
 void main() async {
@@ -18,26 +19,47 @@ void main() async {
   runApp(const PressFitApp());
 }
 
-class PressFitApp extends StatelessWidget {
+class PressFitApp extends StatefulWidget {
   const PressFitApp({super.key});
+
+  @override
+  State<PressFitApp> createState() => _PressFitAppState();
+}
+
+class _PressFitAppState extends State<PressFitApp> {
+  late final AuthProvider _authProvider;
+  late final GoRouter _router;
+
+  @override
+  void initState() {
+    super.initState();
+    _authProvider = AuthProvider();
+    _router = createRouter(_authProvider);
+  }
+
+  @override
+  void dispose() {
+    _router.dispose();
+    _authProvider.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
-        ChangeNotifierProvider(create: (_) => AuthProvider()),
+        ChangeNotifierProvider.value(value: _authProvider),
       ],
-      child: Consumer2<ThemeProvider, AuthProvider>(
-        builder: (context, themeProvider, authProvider, _) {
-          final router = createRouter(authProvider);
+      child: Consumer<ThemeProvider>(
+        builder: (context, themeProvider, _) {
           return MaterialApp.router(
             title: 'PressFit',
             debugShowCheckedModeBanner: false,
             theme: AppTheme.lightTheme,
             darkTheme: AppTheme.darkTheme,
             themeMode: themeProvider.themeMode,
-            routerConfig: router,
+            routerConfig: _router,
           );
         },
       ),

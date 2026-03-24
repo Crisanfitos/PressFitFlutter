@@ -6,6 +6,9 @@ import 'package:pressfit/models/rutina_diaria.dart';
 import 'package:pressfit/models/ejercicio_programado.dart';
 import 'package:pressfit/models/serie.dart';
 import 'package:pressfit/theme/app_theme.dart';
+import 'package:pressfit/widgets/rest_timer.dart';
+import 'package:pressfit/widgets/weight_type_badge.dart';
+import 'package:pressfit/widgets/personal_note_button.dart';
 
 class WorkoutScreen extends StatefulWidget {
   final String workoutId;
@@ -28,6 +31,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
   bool _loading = true;
   int _timerSeconds = 0;
   Timer? _timer;
+  bool _showRestTimer = false;
 
   @override
   void initState() {
@@ -136,57 +140,83 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
 
     return Scaffold(
       body: SafeArea(
-        child: Column(
+        child: Stack(
           children: [
-            // Header
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: theme.dividerColor.withAlpha(25))),
-              ),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.arrow_back),
-                    onPressed: () => context.pop(),
+            Column(
+              children: [
+                // Header
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    border: Border(bottom: BorderSide(color: theme.dividerColor.withAlpha(25))),
                   ),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(widget.dayName,
-                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: theme.textTheme.bodyLarge?.color)),
-                        const SizedBox(height: 4),
-                        Text(_formattedTimer,
-                            style: const TextStyle(fontSize: 16, color: AppColors.primary, fontWeight: FontWeight.w600)),
-                      ],
-                    ),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back),
+                        onPressed: () => context.pop(),
+                      ),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(widget.dayName,
+                                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: theme.textTheme.bodyLarge?.color)),
+                            const SizedBox(height: 4),
+                            Text(_formattedTimer,
+                                style: const TextStyle(fontSize: 16, color: AppColors.primary, fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                      // Rest timer button
+                      IconButton(
+                        onPressed: () => setState(() => _showRestTimer = !_showRestTimer),
+                        icon: Icon(
+                          Icons.timer,
+                          color: _showRestTimer ? AppColors.primary : theme.textTheme.bodyMedium?.color,
+                        ),
+                      ),
+                      ElevatedButton(
+                        onPressed: _handleFinishWorkout,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.success,
+                          foregroundColor: Colors.white,
+                        ),
+                        child: const Text('Finalizar'),
+                      ),
+                    ],
                   ),
-                  ElevatedButton(
-                    onPressed: _handleFinishWorkout,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.success,
-                      foregroundColor: Colors.white,
-                    ),
-                    child: const Text('Finalizar'),
+                ),
+
+                // Exercises
+                Expanded(
+                  child: ListView.builder(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: exercises.length + 1,
+                    itemBuilder: (context, index) {
+                      if (index == exercises.length) {
+                        return _buildAddExerciseButton(theme);
+                      }
+                      return _buildExerciseSection(theme, exercises[index]);
+                    },
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
 
-            // Exercises
-            Expanded(
-              child: ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: exercises.length + 1, // +1 for add exercise button
-                itemBuilder: (context, index) {
-                  if (index == exercises.length) {
-                    return _buildAddExerciseButton(theme);
-                  }
-                  return _buildExerciseSection(theme, exercises[index]);
-                },
+            // Rest timer overlay
+            if (_showRestTimer)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: RestTimer(
+                  onDismiss: () => setState(() => _showRestTimer = false),
+                  onTimerStop: (seconds) {
+                    setState(() => _showRestTimer = false);
+                  },
+                ),
               ),
-            ),
           ],
         ),
       ),
@@ -240,6 +270,23 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
                   const PopupMenuItem(value: 'remove', child: Text('Eliminar')),
                 ],
               ),
+            ],
+          ),
+
+          // Weight type badge and personal note
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              WeightTypeBadge(
+                tipoPeso: ex.tipoPeso,
+                editable: true,
+                onSelect: (tipo) async {
+                  await WorkoutService.updateWeightType(ex.id, tipo);
+                  _loadWorkout();
+                },
+              ),
+              const SizedBox(width: 8),
+              PersonalNoteButton(exerciseId: ex.ejercicioId),
             ],
           ),
 

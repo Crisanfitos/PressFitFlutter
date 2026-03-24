@@ -136,6 +136,11 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
     final isCurrentMonth = DateTime.now().year == _year && DateTime.now().month == _month;
 
     return Scaffold(
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => context.go('/weekly/routines'),
+        backgroundColor: AppColors.primary,
+        child: const Icon(Icons.edit_note, color: Colors.white),
+      ),
       body: SafeArea(
         child: _loading
             ? const Center(child: CircularProgressIndicator())

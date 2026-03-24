@@ -10,7 +10,14 @@ import 'package:pressfit/screens/weekly/workout_day_screen.dart';
 import 'package:pressfit/screens/weekly/workout_screen.dart';
 import 'package:pressfit/screens/weekly/exercise_library_screen.dart';
 import 'package:pressfit/screens/weekly/exercise_detail_screen.dart';
-import 'package:pressfit/screens/progress/progress_screen.dart';
+import 'package:pressfit/screens/weekly/routine_editor_screen.dart';
+import 'package:pressfit/screens/weekly/routine_detail_screen.dart';
+import 'package:pressfit/screens/progress/progress_menu_screen.dart';
+import 'package:pressfit/screens/progress/monthly_progress_screen.dart';
+import 'package:pressfit/screens/progress/weekly_progress_screen.dart';
+import 'package:pressfit/screens/progress/daily_progress_screen.dart';
+import 'package:pressfit/screens/progress/exercise_tracking_screen.dart';
+import 'package:pressfit/screens/progress/exercise_progress_detail_screen.dart';
 import 'package:pressfit/screens/profile/profile_screen.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
@@ -31,18 +38,9 @@ GoRouter createRouter(AuthProvider authProvider) {
     },
     routes: [
       // Auth routes
-      GoRoute(
-        path: '/auth/welcome',
-        builder: (context, state) => const WelcomeScreen(),
-      ),
-      GoRoute(
-        path: '/auth/login',
-        builder: (context, state) => const LoginScreen(),
-      ),
-      GoRoute(
-        path: '/auth/signup',
-        builder: (context, state) => const SignUpScreen(),
-      ),
+      GoRoute(path: '/auth/welcome', builder: (context, state) => const WelcomeScreen()),
+      GoRoute(path: '/auth/login', builder: (context, state) => const LoginScreen()),
+      GoRoute(path: '/auth/signup', builder: (context, state) => const SignUpScreen()),
 
       // Main app with bottom navigation
       StatefulShellRoute.indexedStack(
@@ -50,6 +48,7 @@ GoRouter createRouter(AuthProvider authProvider) {
           return MainShell(navigationShell: navigationShell);
         },
         branches: [
+          // Tab 1: Weekly
           StatefulShellBranch(
             navigatorKey: _weeklyNavigatorKey,
             routes: [
@@ -83,9 +82,7 @@ GoRouter createRouter(AuthProvider authProvider) {
                             path: 'exercises',
                             builder: (context, state) {
                               final extra = state.extra as Map<String, dynamic>? ?? {};
-                              return ExerciseLibraryScreen(
-                                routineDayId: extra['routineDayId'] as String?,
-                              );
+                              return ExerciseLibraryScreen(routineDayId: extra['routineDayId'] as String?);
                             },
                           ),
                         ],
@@ -94,24 +91,45 @@ GoRouter createRouter(AuthProvider authProvider) {
                   ),
                   GoRoute(
                     path: 'exercise/:id',
-                    builder: (context, state) {
-                      return ExerciseDetailScreen(
-                        exerciseId: state.pathParameters['id']!,
-                      );
-                    },
+                    builder: (context, state) => ExerciseDetailScreen(exerciseId: state.pathParameters['id']!),
+                  ),
+                  GoRoute(
+                    path: 'routines',
+                    builder: (context, state) => const RoutineEditorScreen(),
+                  ),
+                  GoRoute(
+                    path: 'routine/:id',
+                    builder: (context, state) => RoutineDetailScreen(routineId: state.pathParameters['id']!),
                   ),
                 ],
               ),
             ],
           ),
+          // Tab 2: Progress
           StatefulShellBranch(
             routes: [
               GoRoute(
                 path: '/progress',
-                builder: (context, state) => const ProgressScreen(),
+                builder: (context, state) => const ProgressMenuScreen(),
+                routes: [
+                  GoRoute(path: 'monthly', builder: (context, state) => const MonthlyProgressScreen()),
+                  GoRoute(path: 'weekly', builder: (context, state) => const WeeklyProgressScreen()),
+                  GoRoute(path: 'daily', builder: (context, state) => const DailyProgressScreen()),
+                  GoRoute(
+                    path: 'exercises',
+                    builder: (context, state) => const ExerciseTrackingScreen(),
+                    routes: [
+                      GoRoute(
+                        path: ':id',
+                        builder: (context, state) => ExerciseProgressDetailScreen(exerciseId: state.pathParameters['id']!),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ],
           ),
+          // Tab 3: Profile
           StatefulShellBranch(
             routes: [
               GoRoute(

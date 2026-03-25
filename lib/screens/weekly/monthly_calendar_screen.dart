@@ -21,6 +21,7 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
   Set<String> _inProgressDays = {};
   bool _showRoutineSelector = false;
   bool _loading = true;
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
 
   int get _year => _currentDate.year;
   int get _month => _currentDate.month;
@@ -136,6 +137,8 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
     final isCurrentMonth = DateTime.now().year == _year && DateTime.now().month == _month;
 
     return Scaffold(
+      key: _scaffoldKey,
+      drawer: _buildDrawer(theme),
       floatingActionButton: FloatingActionButton(
         onPressed: () => context.go('/weekly/routines'),
         backgroundColor: AppColors.primary,
@@ -151,6 +154,17 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
                 child: ListView(
                   padding: const EdgeInsets.all(20),
                   children: [
+                    // Header with menu
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.menu),
+                          onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+                        ),
+                        const Spacer(),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
                     // Routine Selector
                     _buildRoutineSelector(theme),
                     const SizedBox(height: 20),
@@ -381,6 +395,42 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
           ),
         );
       }).toList(),
+    );
+  }
+
+  Widget _buildDrawer(ThemeData theme) {
+    return Drawer(
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                children: [
+                  const Icon(Icons.fitness_center, color: AppColors.primary, size: 28),
+                  const SizedBox(width: 12),
+                  Text('PressFit',
+                      style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: theme.textTheme.bodyLarge?.color)),
+                ],
+              ),
+            ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.library_books, color: AppColors.primary),
+              title: const Text('Catálogo de Ejercicios'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Navigator.pop(context);
+                context.go('/weekly/catalog');
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 

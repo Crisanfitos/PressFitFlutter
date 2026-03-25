@@ -19,6 +19,8 @@ import 'package:pressfit/screens/progress/daily_progress_screen.dart';
 import 'package:pressfit/screens/progress/exercise_tracking_screen.dart';
 import 'package:pressfit/screens/progress/exercise_progress_detail_screen.dart';
 import 'package:pressfit/screens/profile/profile_screen.dart';
+import 'package:pressfit/screens/progress/physical_progress_screen.dart';
+import 'package:pressfit/screens/weekly/exercise_catalog_screen.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
 final _weeklyNavigatorKey = GlobalKey<NavigatorState>();
@@ -100,6 +102,10 @@ GoRouter createRouter(AuthProvider authProvider) {
                     builder: (context, state) => const RoutineEditorScreen(),
                   ),
                   GoRoute(
+                    path: 'catalog',
+                    builder: (context, state) => const ExerciseCatalogScreen(),
+                  ),
+                  GoRoute(
                     path: 'routine/:id',
                     builder: (context, state) => RoutineDetailScreen(routineId: state.pathParameters['id']!),
                   ),
@@ -139,6 +145,12 @@ GoRouter createRouter(AuthProvider authProvider) {
               GoRoute(
                 path: '/profile',
                 builder: (context, state) => const ProfileScreen(),
+                routes: [
+                  GoRoute(
+                    path: 'physical-progress',
+                    builder: (context, state) => const PhysicalProgressScreen(),
+                  ),
+                ],
               ),
             ],
           ),

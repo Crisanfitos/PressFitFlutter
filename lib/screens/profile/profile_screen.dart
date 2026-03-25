@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:pressfit/providers/auth_provider.dart';
 import 'package:pressfit/providers/theme_provider.dart';
 import 'package:pressfit/services/user_service.dart';
+import 'package:pressfit/services/progress_service.dart';
+import 'package:pressfit/models/foto_progreso.dart';
 import 'package:pressfit/theme/app_theme.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -14,10 +18,12 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   bool _loading = true;
+  bool _uploadingPhoto = false;
   Map<String, dynamic>? _metrics;
   String? _userName;
   String? _userEmail;
   String? _userPhotoUrl;
+  List<FotoProgreso> _progressPhotos = [];
 
   @override
   void initState() {
@@ -37,9 +43,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     try {
       final metrics = await UserService.getUserMetrics(userId);
+      final photos = await ProgressService.getProgressPhotos(userId);
       if (mounted) {
         setState(() {
           _metrics = metrics;
+          _progressPhotos = photos.take(4).toList();
           _loading = false;
         });
       }
@@ -71,6 +79,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   // Metrics
                   _buildMetricsCard(theme),
                   const SizedBox(height: 20),
+
+                  // Progress photos preview
+                  if (_progressPhotos.isNotEmpty) ...[
+                    _buildProgressPhotosPreview(theme),
+                    const SizedBox(height: 20),
+                  ],
+
+                  // Ver Cambio Físico button
+                  OutlinedButton.icon(
+                    onPressed: () => context.go('/profile/physical-progress'),
+                    icon: const Icon(Icons.photo_camera),
+                    label: const Text('Ver Cambio Físico'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.primary,
+                      side: const BorderSide(color: AppColors.primary),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
 
                   // Edit metrics button
                   OutlinedButton.icon(
@@ -111,6 +139,54 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  Future<void> _handleChangeAvatar() async {
+    final userId = context.read<AuthProvider>().user?.id;
+    if (userId == null) return;
+
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('Cámara'),
+              onTap: () => Navigator.pop(ctx, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Galería'),
+              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (source == null || !mounted) return;
+
+    final picker = ImagePicker();
+    final image = await picker.pickImage(source: source, imageQuality: 80);
+    if (image == null || !mounted) return;
+
+    setState(() => _uploadingPhoto = true);
+    try {
+      final url = await UserService.uploadProfilePhoto(userId, image.path);
+      if (url != null && mounted) {
+        setState(() => _userPhotoUrl = url);
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Error al subir foto')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _uploadingPhoto = false);
+    }
+  }
+
   Widget _buildProfileCard(ThemeData theme) {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -121,16 +197,41 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
       child: Row(
         children: [
-          CircleAvatar(
-            radius: 36,
-            backgroundColor: AppColors.primary.withAlpha(51),
-            backgroundImage: _userPhotoUrl != null ? NetworkImage(_userPhotoUrl!) : null,
-            child: _userPhotoUrl == null
-                ? Text(
-                    (_userName ?? _userEmail ?? '?')[0].toUpperCase(),
-                    style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: AppColors.primary),
-                  )
-                : null,
+          GestureDetector(
+            onTap: _uploadingPhoto ? null : _handleChangeAvatar,
+            child: Stack(
+              children: [
+                CircleAvatar(
+                  radius: 36,
+                  backgroundColor: AppColors.primary.withAlpha(51),
+                  backgroundImage: _userPhotoUrl != null ? NetworkImage(_userPhotoUrl!) : null,
+                  child: _uploadingPhoto
+                      ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary))
+                      : _userPhotoUrl == null
+                          ? Text(
+                              (_userName ?? _userEmail ?? '?')[0].toUpperCase(),
+                              style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: AppColors.primary),
+                            )
+                          : null,
+                ),
+                Positioned(
+                  bottom: 0,
+                  right: 0,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: theme.scaffoldBackgroundColor, width: 2),
+                    ),
+                    child: const Icon(Icons.camera_alt, size: 14, color: Colors.white),
+                  ),
+                ),
+              ],
+            ),
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -147,6 +248,60 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   style: TextStyle(fontSize: 14, color: theme.textTheme.bodyMedium?.color),
                 ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProgressPhotosPreview(ThemeData theme) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: theme.cardTheme.color,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: theme.dividerColor.withAlpha(25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Fotos de Progreso',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: theme.textTheme.bodyLarge?.color)),
+              TextButton(
+                onPressed: () => context.go('/profile/physical-progress'),
+                child: const Text('Ver todas'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 80,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _progressPhotos.length,
+              separatorBuilder: (context, index) => const SizedBox(width: 8),
+              itemBuilder: (_, index) {
+                final photo = _progressPhotos[index];
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.network(
+                    photo.urlFoto,
+                    width: 80,
+                    height: 80,
+                    fit: BoxFit.cover,
+                    errorBuilder: (ctx, error, stack) => Container(
+                      width: 80,
+                      height: 80,
+                      color: theme.cardTheme.color,
+                      child: const Icon(Icons.broken_image),
+                    ),
+                  ),
+                );
+              },
             ),
           ),
         ],

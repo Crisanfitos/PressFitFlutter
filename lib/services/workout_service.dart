@@ -221,6 +221,38 @@ class WorkoutService {
     return history;
   }
 
+  static Future<RutinaDiaria?> getLastCompletedWorkoutForDay(
+    String userId,
+    String routineDayId,
+  ) async {
+    // Get the template day info to find same-day workouts
+    final templateDay = await _supabase
+        .from('rutinas_diarias')
+        .select('rutina_semanal_id, nombre_dia')
+        .eq('id', routineDayId)
+        .single();
+
+    final data = await _supabase
+        .from('rutinas_diarias')
+        .select('''
+          *,
+          ejercicios_programados (
+            *,
+            ejercicio:ejercicios (*),
+            series (*)
+          )
+        ''')
+        .eq('rutina_semanal_id', templateDay['rutina_semanal_id'])
+        .eq('nombre_dia', templateDay['nombre_dia'])
+        .eq('completada', true)
+        .not('fecha_dia', 'is', null)
+        .order('fecha_dia', ascending: false)
+        .limit(1);
+
+    if (data.isEmpty) return null;
+    return RutinaDiaria.fromJson(data[0]);
+  }
+
   static Future<void> updateWeightType(
     String scheduledExerciseId,
     TipoPeso tipoPeso,

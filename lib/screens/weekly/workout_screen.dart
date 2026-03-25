@@ -8,6 +8,7 @@ import 'package:pressfit/models/rutina_diaria.dart';
 import 'package:pressfit/models/ejercicio_programado.dart';
 import 'package:pressfit/models/serie.dart';
 import 'package:pressfit/theme/app_theme.dart';
+import 'package:pressfit/screens/weekly/exercise_library_screen.dart';
 import 'package:pressfit/widgets/rest_timer.dart';
 import 'package:pressfit/widgets/weight_type_badge.dart';
 import 'package:pressfit/widgets/personal_note_button.dart';
@@ -465,8 +466,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
           if (_isStructureEditable) ...[
             const SizedBox(height: 20),
             ElevatedButton.icon(
-              onPressed: () => context.go('/weekly/day/workout/exercises',
-                  extra: {'routineDayId': widget.routineDayId}),
+              onPressed: _navigateToExerciseLibrary,
               icon: const Icon(Icons.add),
               label: const Text('Añadir Ejercicio'),
               style: ElevatedButton.styleFrom(
@@ -751,15 +751,22 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
     );
   }
 
+  Future<void> _navigateToExerciseLibrary() async {
+    final result = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => ExerciseLibraryScreen(routineDayId: widget.routineDayId),
+      ),
+    );
+    if (result == true && mounted) {
+      _loadWorkout();
+    }
+  }
+
   Widget _buildAddExerciseButton(ThemeData theme) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: OutlinedButton.icon(
-        onPressed: () {
-          context.go('/weekly/day/workout/exercises', extra: {
-            'routineDayId': widget.routineDayId,
-          });
-        },
+        onPressed: _navigateToExerciseLibrary,
         icon: const Icon(Icons.add),
         label: const Text('Añadir Ejercicio'),
         style: OutlinedButton.styleFrom(

@@ -312,6 +312,72 @@ class RoutineService {
     return RutinaSemanal.fromJson(data);
   }
 
+  static Future<RutinaSemanal?> createRoutineFromTemplate(
+    String userId,
+    String templateId,
+    String newName,
+  ) async {
+    // Get the template with all days and exercises
+    final template = await getWeeklyRoutineWithDays(templateId);
+    if (template == null) return null;
+
+    // Create new routine
+    final newRoutine = await createWeeklyRoutine({
+      'usuario_id': userId,
+      'nombre': newName,
+      'objetivo': template.objetivo,
+      'es_plantilla': true,
+      'activa': false,
+    });
+    if (newRoutine == null) return null;
+
+    // Get the new routine's days
+    final newRoutineWithDays = await getWeeklyRoutineWithDays(newRoutine.id);
+    if (newRoutineWithDays == null) return newRoutine;
+
+    // Copy exercises from template days to new days
+    for (final templateDay in template.rutinasDiarias) {
+      final matchingDay = newRoutineWithDays.rutinasDiarias
+          .where((d) => d.nombreDia == templateDay.nombreDia)
+          .firstOrNull;
+      if (matchingDay == null) continue;
+
+      // Update description
+      if (templateDay.descripcion != null) {
+        await updateRoutineDayDescription(matchingDay.id, templateDay.descripcion!);
+      }
+
+      // Copy exercises
+      for (final ex in templateDay.ejerciciosProgramados) {
+        final newEx = await _supabase
+            .from('ejercicios_programados')
+            .insert({
+              'rutina_diaria_id': matchingDay.id,
+              'ejercicio_id': ex.ejercicioId,
+              'orden_ejecucion': ex.ordenEjecucion,
+              'tipo_peso': ex.tipoPeso.dbValue,
+              'notas_sesion': ex.notasSesion,
+            })
+            .select('id')
+            .single();
+
+        // Copy series
+        if (ex.series.isNotEmpty) {
+          await _supabase.from('series').insert(
+            ex.series.map((s) => {
+              'ejercicio_programado_id': newEx['id'],
+              'numero_serie': s.numeroSerie,
+              'peso_utilizado': s.pesoUtilizado ?? 0,
+              'repeticiones': s.repeticiones ?? 0,
+            }).toList(),
+          );
+        }
+      }
+    }
+
+    return newRoutine;
+  }
+
   static Future<void> updateRoutineDayDescription(
       String dayId, String descripcion) async {
     await _supabase

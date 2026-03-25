@@ -106,7 +106,7 @@ class _ExerciseLibraryScreenState extends State<ExerciseLibraryScreen> {
         widget.routineDayId!,
         _selectedIds.toList(),
       );
-      if (mounted) context.pop();
+      if (mounted) context.pop(true);
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

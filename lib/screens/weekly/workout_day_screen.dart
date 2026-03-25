@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:pressfit/providers/auth_provider.dart';
 import 'package:pressfit/services/routine_service.dart';
 import 'package:pressfit/models/rutina_diaria.dart';
+import 'package:pressfit/screens/weekly/workout_screen.dart';
 import 'package:pressfit/theme/app_theme.dart';
 
 class WorkoutDayScreen extends StatefulWidget {
@@ -105,6 +106,20 @@ class _WorkoutDayScreenState extends State<WorkoutDayScreen> {
     }
   }
 
+  Future<void> _navigateToWorkout(String workoutId) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => WorkoutScreen(
+          workoutId: workoutId,
+          dayName: _dayData!.nombreDia,
+          routineDayId: _dayData!.id,
+        ),
+      ),
+    );
+    // Refresh on return
+    if (mounted) _loadDayData();
+  }
+
   Future<void> _handleStartWorkout() async {
     if (_dayData == null) return;
     setState(() => _loading = true);
@@ -118,11 +133,7 @@ class _WorkoutDayScreenState extends State<WorkoutDayScreen> {
       );
 
       if (newWorkout != null && mounted) {
-        context.go('/weekly/day/workout', extra: {
-          'workoutId': newWorkout.id,
-          'dayName': _dayData!.nombreDia,
-          'routineDayId': _dayData!.id,
-        });
+        _navigateToWorkout(newWorkout.id);
       }
     } catch (_) {
       if (mounted) {
@@ -137,11 +148,7 @@ class _WorkoutDayScreenState extends State<WorkoutDayScreen> {
 
   void _handleContinueWorkout() {
     if (_dayData == null) return;
-    context.go('/weekly/day/workout', extra: {
-      'workoutId': _dayData!.id,
-      'dayName': _dayData!.nombreDia,
-      'routineDayId': _dayData!.id,
-    });
+    _navigateToWorkout(_dayData!.id);
   }
 
   @override
@@ -441,6 +448,18 @@ class _WorkoutDayScreenState extends State<WorkoutDayScreen> {
                           child: Text('RPE ${set.rpe}',
                               style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: theme.textTheme.bodyMedium?.color)),
                         ),
+                      if (set.descansoSegundos != null && set.descansoSegundos! > 0) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withAlpha(32),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text('${set.descansoSegundos}s',
+                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primary)),
+                        ),
+                      ],
                     ],
                   ),
                 )),

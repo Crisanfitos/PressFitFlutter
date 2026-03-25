@@ -20,6 +20,7 @@ import 'package:pressfit/screens/progress/exercise_tracking_screen.dart';
 import 'package:pressfit/screens/progress/exercise_progress_detail_screen.dart';
 import 'package:pressfit/screens/profile/profile_screen.dart';
 import 'package:pressfit/screens/progress/physical_progress_screen.dart';
+import 'package:pressfit/screens/auth/splash_screen.dart';
 import 'package:pressfit/screens/weekly/exercise_catalog_screen.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
@@ -33,14 +34,20 @@ GoRouter createRouter(AuthProvider authProvider) {
     initialLocation: '/weekly',
     refreshListenable: authProvider,
     redirect: (context, state) {
+      final isLoading = authProvider.loading;
       final isAuth = authProvider.isAuthenticated;
       final isAuthRoute = state.matchedLocation.startsWith('/auth');
+      final isSplash = state.matchedLocation == '/splash';
 
+      if (isLoading) return isSplash ? null : '/splash';
       if (!isAuth && !isAuthRoute) return '/auth/welcome';
-      if (isAuth && isAuthRoute) return '/weekly';
+      if (isAuth && (isAuthRoute || isSplash)) return '/weekly';
       return null;
     },
     routes: [
+      // Splash
+      GoRoute(path: '/splash', builder: (context, state) => const SplashScreen()),
+
       // Auth routes
       GoRoute(path: '/auth/welcome', builder: (context, state) => const WelcomeScreen()),
       GoRoute(path: '/auth/login', builder: (context, state) => const LoginScreen()),

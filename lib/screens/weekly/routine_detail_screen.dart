@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:pressfit/services/routine_service.dart';
 import 'package:pressfit/models/rutina_semanal.dart';
+import 'package:pressfit/screens/weekly/workout_screen.dart';
 import 'package:pressfit/theme/app_theme.dart';
 
 class RoutineDetailScreen extends StatefulWidget {
@@ -143,13 +144,18 @@ class _RoutineDetailScreenState extends State<RoutineDetailScreen> {
     final desc = dayData?['descripcion'] as String?;
 
     return GestureDetector(
-      onTap: () {
+      onTap: () async {
         if (dayId != null) {
-          context.go('/weekly/day/workout', extra: {
-            'workoutId': dayId,
-            'dayName': dayName,
-            'routineDayId': dayId,
-          });
+          await Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => WorkoutScreen(
+                workoutId: dayId,
+                dayName: dayName,
+                routineDayId: dayId,
+              ),
+            ),
+          );
+          if (mounted) _loadRoutine();
         }
       },
       child: Container(

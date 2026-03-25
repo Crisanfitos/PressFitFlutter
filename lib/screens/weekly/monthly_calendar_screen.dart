@@ -19,6 +19,7 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
   List<RutinaSemanal> _routines = [];
   Set<String> _completedDays = {};
   Set<String> _inProgressDays = {};
+  Set<String> _missedDays = {};
   bool _showRoutineSelector = false;
   bool _loading = true;
   final _scaffoldKey = GlobalKey<ScaffoldState>();
@@ -31,6 +32,7 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
     'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
   ];
   static const _weekDays = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
+  static const _dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
 
   @override
   void initState() {
@@ -83,10 +85,46 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
         }
       }
 
+      // Calculate missed days: past days with exercises in template but no workout
+      final missed = <String>{};
+      try {
+        if (_selectedRoutine != null) {
+          final routine = await RoutineService.getWeeklyRoutineWithDays(_selectedRoutine!.id);
+          if (routine != null) {
+            // Build map of dayName -> has exercises
+            final templateDays = <String, bool>{};
+            for (final day in routine.rutinasDiarias) {
+              if (day.fechaDia == null && day.ejerciciosProgramados.isNotEmpty) {
+                templateDays[day.nombreDia] = true;
+              }
+            }
+
+            final now = DateTime.now();
+            final today = DateTime(now.year, now.month, now.day);
+            final firstDay = DateTime(_year, _month, 1);
+            final lastDay = DateTime(_year, _month + 1, 0);
+
+            for (int d = 1; d <= lastDay.day; d++) {
+              final date = DateTime(_year, _month, d);
+              if (date.isAfter(today) || date.isBefore(firstDay)) continue;
+              final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+              if (completed.contains(dateStr) || inProgress.contains(dateStr)) continue;
+
+              // Check if this day of week had exercises in template
+              final dayName = _dayNames[date.weekday % 7];
+              if (templateDays[dayName] == true && date.isBefore(today)) {
+                missed.add(dateStr);
+              }
+            }
+          }
+        }
+      } catch (_) {}
+
       if (mounted) {
         setState(() {
           _completedDays = completed;
           _inProgressDays = inProgress;
+          _missedDays = missed;
         });
       }
     } catch (_) {}
@@ -327,11 +365,11 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
         final dateNorm = DateTime(date.year, date.month, date.day);
         final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
         final isToday = dateNorm.isAtSameMomentAs(today);
-        final isPast = dateNorm.isBefore(today);
         final isFuture = dateNorm.isAfter(today);
         final inCurrentWeek = isCurrentMonth && _isInCurrentWeek(date);
         final isCompleted = _completedDays.contains(dateStr);
         final isInProgress = _inProgressDays.contains(dateStr);
+        final isMissed = _missedDays.contains(dateStr);
 
         Color? bgColor;
         Color textColor = theme.textTheme.bodyLarge?.color ?? Colors.white;
@@ -349,7 +387,7 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
           bgColor = AppColors.primary;
           textColor = AppColors.primaryText;
           fontWeight = FontWeight.bold;
-        } else if (isPast) {
+        } else if (isMissed) {
           bgColor = AppColors.error.withAlpha(48);
         }
 
@@ -439,7 +477,7 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
       ('Hoy', AppColors.primary),
       ('Completado', AppColors.success),
       ('En Progreso', AppColors.warning),
-      ('Sin Hacer', AppColors.error.withAlpha(48)),
+      ('Sin Completar', AppColors.error.withAlpha(48)),
     ];
 
     return Wrap(

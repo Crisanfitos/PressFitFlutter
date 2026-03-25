@@ -92,6 +92,43 @@ class _RoutineEditorScreenState extends State<RoutineEditorScreen> {
     _loadRoutines();
   }
 
+  Future<void> _handleDuplicate(RutinaSemanal routine) async {
+    final nameCtrl = TextEditingController(text: '${routine.nombre} (copia)');
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Duplicar Rutina'),
+        content: TextField(
+          controller: nameCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Nombre de la copia',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+            child: const Text('Duplicar'),
+          ),
+        ],
+      ),
+    );
+
+    if (result != true || nameCtrl.text.trim().isEmpty || !mounted) return;
+    final userId = context.read<AuthProvider>().user?.id;
+    if (userId == null) return;
+
+    setState(() => _loading = true);
+    await RoutineService.createRoutineFromTemplate(
+      userId,
+      routine.id,
+      nameCtrl.text.trim(),
+    );
+    _loadRoutines();
+  }
+
   Future<void> _handleDelete(String routineId) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -210,6 +247,8 @@ class _RoutineEditorScreenState extends State<RoutineEditorScreen> {
             children: [
               if (!routine.activa)
                 _buildActionButton(theme, Icons.check_circle_outline, 'Activar', AppColors.primary, () => _handleSetActive(routine)),
+              const SizedBox(width: 8),
+              _buildActionButton(theme, Icons.copy, 'Duplicar', null, () => _handleDuplicate(routine)),
               const SizedBox(width: 8),
               _buildActionButton(theme, Icons.edit, 'Editar', null, () => context.go('/weekly/routine/${routine.id}')),
               const SizedBox(width: 8),

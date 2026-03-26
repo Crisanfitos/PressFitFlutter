@@ -13,7 +13,8 @@ class MonthlyCalendarScreen extends StatefulWidget {
   State<MonthlyCalendarScreen> createState() => _MonthlyCalendarScreenState();
 }
 
-class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
+class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen>
+    with WidgetsBindingObserver {
   DateTime _currentDate = DateTime.now();
   RutinaSemanal? _selectedRoutine;
   List<RutinaSemanal> _routines = [];
@@ -22,6 +23,7 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
   Set<String> _missedDays = {};
   bool _showRoutineSelector = false;
   bool _loading = true;
+  String? _errorMessage;
   final _scaffoldKey = GlobalKey<ScaffoldState>();
 
   int get _year => _currentDate.year;
@@ -32,49 +34,93 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
     'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
   ];
   static const _weekDays = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
-  static const _dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+  static const _dayNames = [
+    'Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'
+  ];
 
   @override
   void initState() {
     super.initState();
-    _loadRoutines();
+    WidgetsBinding.instance.addObserver(this);
+    // Defer loading to ensure context is ready
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadRoutines();
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  // Reload when app comes to foreground (like RN useFocusEffect)
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _loadRoutines();
+    }
   }
 
   Future<void> _loadRoutines() async {
     final userId = context.read<AuthProvider>().user?.id;
-    if (userId == null) return;
+    if (userId == null) {
+      debugPrint('Calendar: userId is null, cannot load routines');
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _errorMessage = 'No se pudo obtener el usuario. Inicia sesión de nuevo.';
+        });
+      }
+      return;
+    }
 
     try {
+      debugPrint('Calendar: loading routines for user $userId');
       final routines = await RoutineService.getAllWeeklyRoutines(userId);
       debugPrint('Calendar: loaded ${routines.length} routines');
+
       if (!mounted) return;
       setState(() {
         _routines = routines;
-        _selectedRoutine = routines.where((r) => r.activa).firstOrNull ?? routines.firstOrNull;
+        _selectedRoutine = routines.where((r) => r.activa).firstOrNull ??
+            routines.firstOrNull;
         _loading = false;
+        _errorMessage = routines.isEmpty ? 'No tienes rutinas creadas aún.' : null;
       });
+
       if (_selectedRoutine != null) {
-        debugPrint('Calendar: selected routine "${_selectedRoutine!.nombre}" (${_selectedRoutine!.id})');
         _loadWorkoutStats();
       }
     } catch (e) {
       debugPrint('Calendar._loadRoutines error: $e');
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _errorMessage = 'Error al cargar rutinas: $e';
+        });
+      }
     }
   }
 
   Future<void> _loadWorkoutStats() async {
     if (_selectedRoutine == null) return;
 
-    final startDate = DateTime(_year, _month, 1).toIso8601String();
-    final endDate = DateTime(_year, _month + 1, 0).toIso8601String();
+    final monthStr = _month.toString().padLeft(2, '0');
+    final startDate = '$_year-$monthStr-01';
+    final lastDay = DateTime(_year, _month + 1, 0).day;
+    final endDate = '$_year-$monthStr-${lastDay.toString().padLeft(2, '0')}';
 
     try {
+      debugPrint('Calendar: loading stats for routine ${_selectedRoutine!.id}, $startDate to $endDate');
+
       final workouts = await RoutineService.getWorkoutsForDateRange(
         [_selectedRoutine!.id],
         startDate,
         endDate,
       );
+
+      debugPrint('Calendar: got ${workouts.length} workouts for date range');
 
       final completed = <String>{};
       final inProgress = <String>{};
@@ -90,40 +136,42 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
         }
       }
 
-      // Calculate missed days: past days with exercises in template but no workout
+      debugPrint('Calendar: completed=${completed.length}, inProgress=${inProgress.length}');
+
+      // Calculate missed days
       final missed = <String>{};
       try {
-        if (_selectedRoutine != null) {
-          final routine = await RoutineService.getWeeklyRoutineWithDays(_selectedRoutine!.id);
-          if (routine != null) {
-            // Build map of dayName -> has exercises
-            final templateDays = <String, bool>{};
-            for (final day in routine.rutinasDiarias) {
-              if (day.fechaDia == null && day.ejerciciosProgramados.isNotEmpty) {
-                templateDays[day.nombreDia] = true;
-              }
+        final routine =
+            await RoutineService.getWeeklyRoutineWithDays(_selectedRoutine!.id);
+        if (routine != null) {
+          final templateDays = <String, bool>{};
+          for (final day in routine.rutinasDiarias) {
+            if (day.fechaDia == null && day.ejerciciosProgramados.isNotEmpty) {
+              templateDays[day.nombreDia] = true;
             }
+          }
 
-            final now = DateTime.now();
-            final today = DateTime(now.year, now.month, now.day);
-            final firstDay = DateTime(_year, _month, 1);
-            final lastDay = DateTime(_year, _month + 1, 0);
+          final now = DateTime.now();
+          final today = DateTime(now.year, now.month, now.day);
+          final lastDayOfMonth = DateTime(_year, _month + 1, 0);
 
-            for (int d = 1; d <= lastDay.day; d++) {
-              final date = DateTime(_year, _month, d);
-              if (date.isAfter(today) || date.isBefore(firstDay)) continue;
-              final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
-              if (completed.contains(dateStr) || inProgress.contains(dateStr)) continue;
-
-              // Check if this day of week had exercises in template
-              final dayName = _dayNames[date.weekday % 7];
-              if (templateDays[dayName] == true && date.isBefore(today)) {
-                missed.add(dateStr);
-              }
+          for (int d = 1; d <= lastDayOfMonth.day; d++) {
+            final date = DateTime(_year, _month, d);
+            if (date.isAfter(today) || date.isAtSameMomentAs(today)) continue;
+            final dateStr =
+                '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+            if (completed.contains(dateStr) || inProgress.contains(dateStr)) {
+              continue;
+            }
+            final dayName = _dayNames[date.weekday % 7];
+            if (templateDays[dayName] == true) {
+              missed.add(dateStr);
             }
           }
         }
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('Calendar: missed day calculation error: $e');
+      }
 
       if (mounted) {
         setState(() {
@@ -140,7 +188,7 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
   List<DateTime?> get _calendarDays {
     final firstDay = DateTime(_year, _month, 1);
     final lastDay = DateTime(_year, _month + 1, 0);
-    final startWeekday = (firstDay.weekday - 1) % 7; // Monday = 0
+    final startWeekday = (firstDay.weekday - 1) % 7;
 
     final days = <DateTime?>[];
     for (int i = 0; i < startWeekday; i++) {
@@ -157,13 +205,14 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
     final monday = now.subtract(Duration(days: now.weekday - 1));
     final sunday = monday.add(const Duration(days: 6));
     final mondayStart = DateTime(monday.year, monday.month, monday.day);
-    final sundayEnd = DateTime(sunday.year, sunday.month, sunday.day, 23, 59, 59);
+    final sundayEnd =
+        DateTime(sunday.year, sunday.month, sunday.day, 23, 59, 59);
     return date.isAfter(mondayStart.subtract(const Duration(seconds: 1))) &&
         date.isBefore(sundayEnd.add(const Duration(seconds: 1)));
   }
 
   void _handleDayPress(DateTime? date) {
-    if (date == null) return;
+    if (date == null || _selectedRoutine == null) return;
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final selected = DateTime(date.year, date.month, date.day);
@@ -179,7 +228,8 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isCurrentMonth = DateTime.now().year == _year && DateTime.now().month == _month;
+    final isCurrentMonth =
+        DateTime.now().year == _year && DateTime.now().month == _month;
 
     return Scaffold(
       key: _scaffoldKey,
@@ -213,9 +263,7 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
         child: _loading
             ? const Center(child: CircularProgressIndicator())
             : RefreshIndicator(
-                onRefresh: () async {
-                  await _loadRoutines();
-                },
+                onRefresh: _loadRoutines,
                 child: ListView(
                   padding: const EdgeInsets.all(20),
                   children: [
@@ -224,12 +272,29 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
                       children: [
                         IconButton(
                           icon: const Icon(Icons.menu),
-                          onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+                          onPressed: () =>
+                              _scaffoldKey.currentState?.openDrawer(),
                         ),
                         const Spacer(),
                       ],
                     ),
                     const SizedBox(height: 8),
+
+                    // Error message
+                    if (_errorMessage != null) ...[
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: AppColors.warning.withAlpha(30),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(_errorMessage!,
+                            style: TextStyle(
+                                color: theme.textTheme.bodyMedium?.color)),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+
                     // Routine Selector
                     _buildRoutineSelector(theme),
                     const SizedBox(height: 20),
@@ -247,7 +312,8 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
                                       style: TextStyle(
                                         fontSize: 12,
                                         fontWeight: FontWeight.w600,
-                                        color: theme.textTheme.bodyMedium?.color,
+                                        color:
+                                            theme.textTheme.bodyMedium?.color,
                                       )),
                                 ),
                               ))
@@ -279,12 +345,14 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
         children: [
           InkWell(
             borderRadius: BorderRadius.circular(16),
-            onTap: () => setState(() => _showRoutineSelector = !_showRoutineSelector),
+            onTap: () =>
+                setState(() => _showRoutineSelector = !_showRoutineSelector),
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Row(
                 children: [
-                  const Icon(Icons.fitness_center, color: AppColors.primary, size: 24),
+                  const Icon(Icons.fitness_center,
+                      color: AppColors.primary, size: 24),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
@@ -297,7 +365,9 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
                     ),
                   ),
                   Icon(
-                    _showRoutineSelector ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                    _showRoutineSelector
+                        ? Icons.keyboard_arrow_up
+                        : Icons.keyboard_arrow_down,
                     color: theme.textTheme.bodyMedium?.color,
                   ),
                 ],
@@ -307,7 +377,9 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
           if (_showRoutineSelector)
             ..._routines.map((routine) => Container(
                   decoration: BoxDecoration(
-                    border: Border(top: BorderSide(color: theme.dividerColor.withAlpha(25))),
+                    border: Border(
+                        top: BorderSide(
+                            color: theme.dividerColor.withAlpha(25))),
                   ),
                   child: ListTile(
                     title: Text(
@@ -316,18 +388,23 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
                         color: routine.activa
                             ? theme.textTheme.bodyLarge?.color
                             : theme.textTheme.bodyMedium?.color,
-                        fontWeight: routine.activa ? FontWeight.w600 : FontWeight.normal,
+                        fontWeight:
+                            routine.activa ? FontWeight.w600 : FontWeight.normal,
                       ),
                     ),
-                    trailing: routine.activa
-                        ? const Icon(Icons.check_circle, color: AppColors.primary, size: 22)
+                    trailing: routine.id == _selectedRoutine?.id
+                        ? const Icon(Icons.check_circle,
+                            color: AppColors.primary, size: 22)
                         : IconButton(
                             icon: Icon(Icons.radio_button_unchecked,
-                                color: theme.textTheme.bodyMedium?.color, size: 22),
+                                color: theme.textTheme.bodyMedium?.color,
+                                size: 22),
                             onPressed: () async {
-                              final userId = context.read<AuthProvider>().user?.id;
+                              final userId =
+                                  context.read<AuthProvider>().user?.id;
                               if (userId == null) return;
-                              await RoutineService.setActiveRoutine(userId, routine.id);
+                              await RoutineService.setActiveRoutine(
+                                  userId, routine.id);
                               _loadRoutines();
                             },
                           ),
@@ -390,7 +467,8 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
         }
 
         final dateNorm = DateTime(date.year, date.month, date.day);
-        final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+        final dateStr =
+            '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
         final isToday = dateNorm.isAtSameMomentAs(today);
         final isFuture = dateNorm.isAfter(today);
         final inCurrentWeek = isCurrentMonth && _isInCurrentWeek(date);
@@ -473,7 +551,8 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
               padding: const EdgeInsets.all(20),
               child: Row(
                 children: [
-                  const Icon(Icons.fitness_center, color: AppColors.primary, size: 28),
+                  const Icon(Icons.fitness_center,
+                      color: AppColors.primary, size: 28),
                   const SizedBox(width: 12),
                   Text('PressFit',
                       style: TextStyle(
@@ -485,7 +564,8 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
             ),
             const Divider(),
             ListTile(
-              leading: const Icon(Icons.library_books, color: AppColors.primary),
+              leading:
+                  const Icon(Icons.library_books, color: AppColors.primary),
               title: const Text('Catálogo de Ejercicios'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
@@ -518,10 +598,13 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
             Container(
               width: 12,
               height: 12,
-              decoration: BoxDecoration(color: item.$2, shape: BoxShape.circle),
+              decoration:
+                  BoxDecoration(color: item.$2, shape: BoxShape.circle),
             ),
             const SizedBox(width: 8),
-            Text(item.$1, style: TextStyle(fontSize: 12, color: theme.textTheme.bodyMedium?.color)),
+            Text(item.$1,
+                style: TextStyle(
+                    fontSize: 12, color: theme.textTheme.bodyMedium?.color)),
           ],
         );
       }).toList(),

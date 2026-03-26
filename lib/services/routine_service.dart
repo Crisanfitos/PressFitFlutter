@@ -5,6 +5,7 @@ import 'package:pressfit/models/rutina_diaria.dart';
 
 class RoutineService {
   static final _supabase = Supabase.instance.client;
+  static SupabaseClient get supabase => _supabase;
 
   static Future<RutinaSemanal?> getWeeklyRoutineWithDays(
       String routineId) async {

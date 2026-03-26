@@ -3,7 +3,6 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:pressfit/providers/auth_provider.dart';
 import 'package:pressfit/services/routine_service.dart';
-import 'package:pressfit/models/rutina_diaria.dart';
 import 'package:pressfit/screens/weekly/workout_screen.dart';
 import 'package:pressfit/theme/app_theme.dart';
 
@@ -25,12 +24,20 @@ class WorkoutDayScreen extends StatefulWidget {
 
 class _WorkoutDayScreenState extends State<WorkoutDayScreen> {
   bool _loading = true;
-  RutinaDiaria? _dayData; // template day data (exercises to show)
+  String? _errorMessage;
+
+  // Raw day data (instance or template)
+  Map<String, dynamic>? _rawDayData;
+  List<dynamic> _exercises = [];
+
+  // Derived stats
   bool _isCompleted = false;
   bool _isActive = false;
+  String? _activeWorkoutId;
   int _exerciseCount = 0;
   int? _durationMinutes;
-  String? _activeWorkoutId; // ID of in-progress workout instance
+  String _dayName = '';
+  String? _dayDescription;
 
   late DateTime _selectedDate;
 
@@ -60,92 +67,149 @@ class _WorkoutDayScreenState extends State<WorkoutDayScreen> {
     return '$h:$m';
   }
 
+  /// Replicates exactly the RN loadDayData logic:
+  /// 1. Try getRoutineDayByDate (finds workout instance for specific date)
+  /// 2. Fallback to getRoutineDayByName (gets template)
+  /// 3. Derive all stats from the found data
   Future<void> _loadDayData() async {
     final userId = context.read<AuthProvider>().user?.id;
     if (userId == null || widget.routineId == null) {
-      setState(() => _loading = false);
+      setState(() {
+        _loading = false;
+        _errorMessage = 'No se pudo cargar datos del día';
+      });
       return;
     }
 
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _errorMessage = null;
+    });
 
     try {
       final dateStr =
           '${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}';
-
-      // 1. Try to find a workout instance for this date
-      var instanceDay =
-          await RoutineService.getRoutineDayByDate(widget.routineId!, dateStr);
-
-      // 2. Always load template by day name for exercise display
       final dayName = _dayNames[_selectedDate.weekday % 7];
-      final templateDay =
-          await RoutineService.getRoutineDayByName(widget.routineId!, dayName);
 
-      // Use instance if found, otherwise template
-      final displayDay = instanceDay ?? templateDay;
+      debugPrint('WorkoutDay: loading data for $dateStr, routine=${widget.routineId}, dayName=$dayName');
 
-      if (displayDay != null && mounted) {
-        final exercises = displayDay.ejerciciosProgramados;
-        final exerciseIds = exercises.map((e) => e.ejercicioId).toSet();
+      // Step 1: Try to find workout instance by date (direct Supabase query)
+      Map<String, dynamic>? targetDay;
+      try {
+        final data = await RoutineService.supabase
+            .from('rutinas_diarias')
+            .select('''
+              *,
+              ejercicios_programados (
+                id, ejercicio_id, orden_ejecucion, tipo_peso, notas_sesion,
+                ejercicio:ejercicios (*),
+                series (*)
+              )
+            ''')
+            .eq('rutina_semanal_id', widget.routineId!)
+            .eq('fecha_dia', dateStr)
+            .order('created_at', ascending: false)
+            .limit(1)
+            .maybeSingle();
+        targetDay = data;
+        debugPrint('WorkoutDay: instance by date: ${targetDay != null ? "found" : "not found"}');
+      } catch (e) {
+        debugPrint('WorkoutDay: getByDate error: $e');
+      }
 
-        // Calculate duration from instance
+      // Step 2: Fallback to template by day name
+      if (targetDay == null) {
+        try {
+          final data = await RoutineService.supabase
+              .from('rutinas_diarias')
+              .select('''
+                *,
+                ejercicios_programados (
+                  id, ejercicio_id, orden_ejecucion, tipo_peso, notas_sesion,
+                  ejercicio:ejercicios (*),
+                  series (*)
+                )
+              ''')
+              .eq('rutina_semanal_id', widget.routineId!)
+              .eq('nombre_dia', dayName)
+              .isFilter('fecha_dia', null)
+              .limit(1)
+              .maybeSingle();
+          targetDay = data;
+          debugPrint('WorkoutDay: template by name: ${targetDay != null ? "found" : "not found"}');
+        } catch (e) {
+          debugPrint('WorkoutDay: getByName error: $e');
+        }
+      }
+
+      if (targetDay != null && mounted) {
+        // Sort exercises by orden_ejecucion
+        final rawExercises =
+            (targetDay['ejercicios_programados'] as List<dynamic>?) ?? [];
+        rawExercises.sort((a, b) =>
+            ((a['orden_ejecucion'] ?? 0) as int)
+                .compareTo((b['orden_ejecucion'] ?? 0) as int));
+
+        // Sort series within each exercise
+        for (final ex in rawExercises) {
+          final series = (ex['series'] as List<dynamic>?) ?? [];
+          series.sort((a, b) =>
+              ((a['numero_serie'] ?? 0) as int)
+                  .compareTo((b['numero_serie'] ?? 0) as int));
+        }
+
+        final uniqueExerciseIds =
+            rawExercises.map((e) => e['ejercicio_id']).toSet();
+
+        // Calculate duration
         int? duration;
-        if (instanceDay != null &&
-            instanceDay.horaInicio != null &&
-            instanceDay.horaFin != null) {
-          final start = DateTime.parse(instanceDay.horaInicio!);
-          final end = DateTime.parse(instanceDay.horaFin!);
+        if (targetDay['hora_inicio'] != null &&
+            targetDay['hora_fin'] != null) {
+          final start = DateTime.parse(targetDay['hora_inicio'] as String);
+          final end = DateTime.parse(targetDay['hora_fin'] as String);
           final mins = end.difference(start).inMinutes;
           if (mins >= 5) duration = mins;
         }
 
-        final isCompleted = instanceDay != null &&
-            (instanceDay.completada || instanceDay.horaFin != null);
-        final isActive = instanceDay != null &&
-            instanceDay.horaInicio != null &&
-            !instanceDay.completada &&
-            instanceDay.horaFin == null;
+        final isCompleted =
+            (targetDay['completada'] == true) || targetDay['hora_fin'] != null;
+        final isActive = targetDay['hora_inicio'] != null &&
+            targetDay['completada'] != true &&
+            targetDay['hora_fin'] == null;
+
+        debugPrint('WorkoutDay: exercises=${rawExercises.length}, completed=$isCompleted, active=$isActive');
 
         setState(() {
-          _dayData = displayDay;
-          _exerciseCount = exerciseIds.length;
+          _rawDayData = targetDay;
+          _exercises = rawExercises;
+          _dayName = targetDay!['nombre_dia'] as String? ?? dayName;
+          _dayDescription = targetDay['descripcion'] as String?;
+          _exerciseCount = uniqueExerciseIds.length;
           _durationMinutes = duration;
           _isCompleted = isCompleted;
           _isActive = isActive;
-          _activeWorkoutId = isActive ? instanceDay.id : null;
+          _activeWorkoutId =
+              isActive ? targetDay['id'] as String? : null;
           _loading = false;
         });
       } else {
-        // No data found: also try getWorkoutStatsForRoutineDay
-        // for cases where template exists in DB with an older query approach
-        if (templateDay != null) {
-          final stats = await RoutineService.getWorkoutStatsForRoutineDay(
-              userId, templateDay.id);
-          final activeWorkout =
-              await RoutineService.getActiveWorkout(userId, templateDay.id);
-
-          if (mounted) {
-            setState(() {
-              _dayData = templateDay;
-              _exerciseCount = stats?['exerciseCount'] as int? ?? 0;
-              _durationMinutes = stats?['duration'] as int?;
-              _isCompleted = stats?['isCompleted'] as bool? ?? false;
-              _isActive = activeWorkout != null;
-              _activeWorkoutId = activeWorkout?['id'] as String?;
-              _loading = false;
-            });
-          }
-        } else {
-          setState(() {
-            _dayData = null;
-            _loading = false;
-          });
-        }
+        debugPrint('WorkoutDay: no data found for this day');
+        setState(() {
+          _rawDayData = null;
+          _exercises = [];
+          _dayName = dayName;
+          _loading = false;
+          _errorMessage = 'No hay datos para este día';
+        });
       }
     } catch (e) {
-      debugPrint('WorkoutDayScreen._loadDayData error: $e');
-      if (mounted) setState(() => _loading = false);
+      debugPrint('WorkoutDay._loadDayData error: $e');
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _errorMessage = 'Error al cargar: $e';
+        });
+      }
     }
   }
 
@@ -154,65 +218,61 @@ class _WorkoutDayScreenState extends State<WorkoutDayScreen> {
       MaterialPageRoute(
         builder: (_) => WorkoutScreen(
           workoutId: workoutId,
-          dayName: _dayData!.nombreDia,
-          routineDayId: _dayData!.id,
+          dayName: _dayName,
+          routineDayId: _rawDayData?['id'] as String? ?? '',
         ),
       ),
     );
-    // Refresh on return
     if (mounted) _loadDayData();
   }
 
   Future<void> _handleStartWorkout() async {
-    if (_dayData == null) return;
+    if (_rawDayData == null) return;
     setState(() => _loading = true);
 
     try {
+      final dayId = _rawDayData!['id'] as String;
       final now = DateTime.now();
       final newWorkout = await RoutineService.startDailyWorkout(
-        _dayData!.id,
+        dayId,
         now.toIso8601String(),
         now.toIso8601String(),
       );
 
       if (newWorkout != null && mounted) {
         _navigateToWorkout(newWorkout.id);
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Error: no se creó el entrenamiento')),
+          );
+          setState(() => _loading = false);
+        }
       }
     } catch (e) {
       debugPrint('handleStartWorkout error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Error al crear entrenamiento')),
+          SnackBar(content: Text('Error al crear entrenamiento: $e')),
         );
+        setState(() => _loading = false);
       }
-    } finally {
-      if (mounted) setState(() => _loading = false);
     }
   }
 
   void _handleContinueWorkout() {
     if (_activeWorkoutId != null) {
       _navigateToWorkout(_activeWorkoutId!);
-    } else if (_dayData != null) {
-      _navigateToWorkout(_dayData!.id);
     }
-  }
-
-  void _handleViewCompletedWorkout() {
-    if (_dayData == null) return;
-    // For completed workouts, navigate to view mode
-    _navigateToWorkout(_dayData!.id);
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final exercises = _dayData?.ejerciciosProgramados ?? [];
 
     if (_loading) {
       return Scaffold(
-        body: Center(
-            child: CircularProgressIndicator(color: AppColors.primary)),
+        body: Center(child: CircularProgressIndicator(color: AppColors.primary)),
       );
     }
 
@@ -220,18 +280,21 @@ class _WorkoutDayScreenState extends State<WorkoutDayScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // Header
             _buildHeader(theme),
-
-            // Content
             Expanded(
               child: ListView(
                 padding: const EdgeInsets.all(20),
                 children: [
+                  if (_errorMessage != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 16),
+                      child: Text(_errorMessage!,
+                          style: TextStyle(color: theme.textTheme.bodyMedium?.color)),
+                    ),
                   Text(
                     _isCompleted
                         ? 'Ejercicios'
-                        : 'Ejercicios (${exercises.length})',
+                        : 'Ejercicios (${_exercises.length})',
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w600,
@@ -239,19 +302,17 @@ class _WorkoutDayScreenState extends State<WorkoutDayScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  if (exercises.isEmpty)
+                  if (_exercises.isEmpty)
                     _buildEmptyState(theme)
                   else if (_isCompleted)
-                    ...exercises
-                        .map((ex) => _buildCompletedExerciseCard(theme, ex))
+                    ..._exercises.map((ex) => _buildCompletedExerciseCard(theme, ex))
                   else
-                    ...exercises.map((ex) => _buildExerciseCard(theme, ex)),
+                    ..._exercises.map((ex) => _buildExerciseCard(theme, ex)),
                 ],
               ),
             ),
-
-            // Action Buttons
-            if (exercises.isNotEmpty) _buildActionButton(theme),
+            // Action button
+            if (_exercises.isNotEmpty) _buildActionButton(theme),
           ],
         ),
       ),
@@ -259,14 +320,16 @@ class _WorkoutDayScreenState extends State<WorkoutDayScreen> {
   }
 
   Widget _buildActionButton(ThemeData theme) {
-    // Completed workout: show "Ver Entrenamiento" to review
     if (_isCompleted) {
       return Padding(
         padding: const EdgeInsets.all(20),
         child: SizedBox(
           width: double.infinity,
           child: OutlinedButton.icon(
-            onPressed: _handleViewCompletedWorkout,
+            onPressed: () {
+              final id = _rawDayData?['id'] as String?;
+              if (id != null) _navigateToWorkout(id);
+            },
             icon: const Icon(Icons.visibility),
             label: const Text('Ver Entrenamiento'),
             style: OutlinedButton.styleFrom(
@@ -279,17 +342,14 @@ class _WorkoutDayScreenState extends State<WorkoutDayScreen> {
       );
     }
 
-    // Today with active or pending workout
-    if (widget.isToday) {
+    if (widget.isToday && !_isCompleted) {
       return Padding(
         padding: const EdgeInsets.all(20),
         child: SizedBox(
           width: double.infinity,
           child: ElevatedButton.icon(
-            onPressed:
-                _isActive ? _handleContinueWorkout : _handleStartWorkout,
-            icon:
-                Icon(_isActive ? Icons.play_arrow : Icons.play_circle_filled),
+            onPressed: _isActive ? _handleContinueWorkout : _handleStartWorkout,
+            icon: Icon(_isActive ? Icons.play_arrow : Icons.play_circle_filled),
             label: Text(
                 _isActive ? 'Continuar Entrenamiento' : 'Empezar Entrenamiento'),
           ),
@@ -304,8 +364,7 @@ class _WorkoutDayScreenState extends State<WorkoutDayScreen> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        border: Border(
-            bottom: BorderSide(color: theme.dividerColor.withAlpha(25))),
+        border: Border(bottom: BorderSide(color: theme.dividerColor.withAlpha(25))),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -318,24 +377,19 @@ class _WorkoutDayScreenState extends State<WorkoutDayScreen> {
               ),
               const SizedBox(width: 8),
               Text(_formattedDate,
-                  style: TextStyle(
-                      fontSize: 16,
-                      color: theme.textTheme.bodyMedium?.color)),
+                  style: TextStyle(fontSize: 16, color: theme.textTheme.bodyMedium?.color)),
             ],
           ),
           const SizedBox(height: 8),
           Text(
-            _dayData?.nombreDia ?? 'Sin entrenar',
+            _dayName.isNotEmpty ? _dayName : 'Sin entrenar',
             style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-                color: theme.textTheme.bodyLarge?.color),
+                fontSize: 28, fontWeight: FontWeight.bold, color: theme.textTheme.bodyLarge?.color),
           ),
-          if (_dayData?.descripcion != null) ...[
+          if (_dayDescription != null) ...[
             const SizedBox(height: 4),
-            Text(_dayData!.descripcion!,
-                style: const TextStyle(
-                    color: AppColors.primary, fontStyle: FontStyle.italic)),
+            Text(_dayDescription!,
+                style: const TextStyle(color: AppColors.primary, fontStyle: FontStyle.italic)),
           ],
           if (_isCompleted) ...[
             const SizedBox(height: 12),
@@ -351,9 +405,7 @@ class _WorkoutDayScreenState extends State<WorkoutDayScreen> {
                   Icon(Icons.check_circle, size: 18, color: AppColors.success),
                   SizedBox(width: 6),
                   Text('Completado',
-                      style: TextStyle(
-                          color: AppColors.success,
-                          fontWeight: FontWeight.w600)),
+                      style: TextStyle(color: AppColors.success, fontWeight: FontWeight.w600)),
                 ],
               ),
             ),
@@ -367,20 +419,15 @@ class _WorkoutDayScreenState extends State<WorkoutDayScreen> {
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.fitness_center,
-                      size: 20, color: AppColors.primary),
+                  const Icon(Icons.fitness_center, size: 20, color: AppColors.primary),
                   const SizedBox(width: 6),
                   Text('$_exerciseCount Ejercicios',
-                      style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: theme.textTheme.bodyLarge?.color)),
+                      style: TextStyle(fontWeight: FontWeight.w600, color: theme.textTheme.bodyLarge?.color)),
                   const SizedBox(width: 16),
                   const Icon(Icons.timer, size: 20, color: AppColors.primary),
                   const SizedBox(width: 6),
                   Text(_formatDuration(_durationMinutes),
-                      style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: theme.textTheme.bodyLarge?.color)),
+                      style: TextStyle(fontWeight: FontWeight.w600, color: theme.textTheme.bodyLarge?.color)),
                 ],
               ),
             ),
@@ -399,9 +446,7 @@ class _WorkoutDayScreenState extends State<WorkoutDayScreen> {
                   Icon(Icons.play_circle, size: 18, color: AppColors.warning),
                   SizedBox(width: 6),
                   Text('En Progreso',
-                      style: TextStyle(
-                          color: AppColors.warning,
-                          fontWeight: FontWeight.w600)),
+                      style: TextStyle(color: AppColors.warning, fontWeight: FontWeight.w600)),
                 ],
               ),
             ),
@@ -417,14 +462,12 @@ class _WorkoutDayScreenState extends State<WorkoutDayScreen> {
         padding: const EdgeInsets.symmetric(vertical: 40),
         child: Column(
           children: [
-            Icon(Icons.fitness_center,
-                size: 48, color: theme.textTheme.bodyMedium?.color),
+            Icon(Icons.fitness_center, size: 48, color: theme.textTheme.bodyMedium?.color),
             const SizedBox(height: 12),
             Text(
               'No hay ejercicios programados para este día.\nEdita tu rutina para añadir ejercicios.',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                  fontSize: 16, color: theme.textTheme.bodyMedium?.color),
+              style: TextStyle(fontSize: 16, color: theme.textTheme.bodyMedium?.color),
             ),
           ],
         ),
@@ -433,6 +476,9 @@ class _WorkoutDayScreenState extends State<WorkoutDayScreen> {
   }
 
   Widget _buildExerciseCard(ThemeData theme, dynamic ex) {
+    final ejercicio = ex['ejercicio'] as Map<String, dynamic>?;
+    final series = (ex['series'] as List<dynamic>?) ?? [];
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
@@ -444,50 +490,31 @@ class _WorkoutDayScreenState extends State<WorkoutDayScreen> {
       child: Row(
         children: [
           Container(
-            width: 48,
-            height: 48,
+            width: 48, height: 48,
             decoration: BoxDecoration(
               color: AppColors.primary.withAlpha(51),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(Icons.fitness_center,
-                size: 24, color: AppColors.primary),
+            child: const Icon(Icons.fitness_center, size: 24, color: AppColors.primary),
           ),
           const SizedBox(width: 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  ex.ejercicio?.titulo ?? 'Ejercicio',
-                  style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: theme.textTheme.bodyLarge?.color),
-                ),
+                Text(ejercicio?['titulo'] as String? ?? 'Ejercicio',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: theme.textTheme.bodyLarge?.color)),
                 const SizedBox(height: 4),
-                Text(
-                  ex.ejercicio?.grupoMuscular ?? 'Sin grupo',
-                  style: TextStyle(
-                      fontSize: 14,
-                      color: theme.textTheme.bodyMedium?.color),
-                ),
+                Text(ejercicio?['grupo_muscular'] as String? ?? 'Sin grupo',
+                    style: TextStyle(fontSize: 14, color: theme.textTheme.bodyMedium?.color)),
               ],
             ),
           ),
           Column(
             children: [
-              Text(
-                '${ex.series.length}',
-                style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.primary),
-              ),
-              Text('series',
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: theme.textTheme.bodyMedium?.color)),
+              Text('${series.length}',
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.primary)),
+              Text('series', style: TextStyle(fontSize: 12, color: theme.textTheme.bodyMedium?.color)),
             ],
           ),
         ],
@@ -496,8 +523,8 @@ class _WorkoutDayScreenState extends State<WorkoutDayScreen> {
   }
 
   Widget _buildCompletedExerciseCard(ThemeData theme, dynamic ex) {
-    final sortedSeries = List.from(ex.series)
-      ..sort((a, b) => a.numeroSerie.compareTo(b.numeroSerie));
+    final ejercicio = ex['ejercicio'] as Map<String, dynamic>?;
+    final series = (ex['series'] as List<dynamic>?) ?? [];
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
@@ -510,107 +537,80 @@ class _WorkoutDayScreenState extends State<WorkoutDayScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header
           Row(
             children: [
               Container(
-                width: 48,
-                height: 48,
+                width: 48, height: 48,
                 decoration: BoxDecoration(
                   color: AppColors.primary.withAlpha(51),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(Icons.fitness_center,
-                    size: 24, color: AppColors.primary),
+                child: const Icon(Icons.fitness_center, size: 24, color: AppColors.primary),
               ),
               const SizedBox(width: 16),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      ex.ejercicio?.titulo ?? 'Ejercicio',
-                      style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: theme.textTheme.bodyLarge?.color),
-                    ),
+                    Text(ejercicio?['titulo'] as String? ?? 'Ejercicio',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: theme.textTheme.bodyLarge?.color)),
                     const SizedBox(height: 2),
-                    Text(
-                      ex.ejercicio?.grupoMuscular ?? 'Sin grupo',
-                      style: TextStyle(
-                          fontSize: 14,
-                          color: theme.textTheme.bodyMedium?.color),
-                    ),
+                    Text(ejercicio?['grupo_muscular'] as String? ?? 'Sin grupo',
+                        style: TextStyle(fontSize: 14, color: theme.textTheme.bodyMedium?.color)),
                   ],
                 ),
               ),
             ],
           ),
           const Divider(height: 24),
-          // Series
-          if (sortedSeries.isEmpty)
+          if (series.isEmpty)
             Text('No se registraron series.',
-                style: TextStyle(
-                    fontSize: 14,
-                    color: theme.textTheme.bodyMedium?.color))
+                style: TextStyle(fontSize: 14, color: theme.textTheme.bodyMedium?.color))
           else
-            ...sortedSeries.map((set) => Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  child: Row(
-                    children: [
-                      SizedBox(
-                        width: 60,
-                        child: Text('Serie ${set.numeroSerie}',
-                            style: TextStyle(
-                                fontSize: 14,
-                                color: theme.textTheme.bodyMedium?.color)),
+            ...series.map((set) {
+              final peso = set['peso_utilizado'];
+              final reps = set['repeticiones'];
+              final rpe = set['rpe'];
+              final descanso = set['descanso_segundos'];
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 60,
+                      child: Text('Serie ${set['numero_serie'] ?? 0}',
+                          style: TextStyle(fontSize: 14, color: theme.textTheme.bodyMedium?.color)),
+                    ),
+                    Expanded(
+                      child: Text('${peso ?? 0} kg × ${reps ?? 0} reps',
+                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: theme.textTheme.bodyLarge?.color)),
+                    ),
+                    if (rpe != null)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: theme.textTheme.bodyMedium?.color?.withAlpha(32),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text('RPE $rpe',
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: theme.textTheme.bodyMedium?.color)),
                       ),
-                      Expanded(
-                        child: Text(
-                          '${set.pesoUtilizado ?? 0} kg × ${set.repeticiones ?? 0} reps',
-                          style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w500,
-                              color: theme.textTheme.bodyLarge?.color),
+                    if (descanso != null && (descanso as int) > 0) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withAlpha(32),
+                          borderRadius: BorderRadius.circular(12),
                         ),
+                        child: Text('${descanso}s',
+                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primary)),
                       ),
-                      if (set.rpe != null)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: theme.textTheme.bodyMedium?.color
-                                ?.withAlpha(32),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text('RPE ${set.rpe}',
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                  color:
-                                      theme.textTheme.bodyMedium?.color)),
-                        ),
-                      if (set.descansoSegundos != null &&
-                          set.descansoSegundos! > 0) ...[
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: AppColors.primary.withAlpha(32),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text('${set.descansoSegundos}s',
-                              style: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                  color: AppColors.primary)),
-                        ),
-                      ],
                     ],
-                  ),
-                )),
+                  ],
+                ),
+              );
+            }),
         ],
       ),
     );

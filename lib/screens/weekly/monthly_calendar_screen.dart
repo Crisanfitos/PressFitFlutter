@@ -177,10 +177,30 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
     return Scaffold(
       key: _scaffoldKey,
       drawer: _buildDrawer(theme),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => context.go('/weekly/routines'),
-        backgroundColor: AppColors.primary,
-        child: const Icon(Icons.edit_note, color: Colors.white),
+      floatingActionButton: Container(
+        width: 56,
+        height: 56,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: LinearGradient(
+            colors: [AppColors.primary, AppColors.primary.withAlpha(221)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.primary.withAlpha(100),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: FloatingActionButton(
+          onPressed: () => context.go('/weekly/routines'),
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          child: const Icon(Icons.edit_note, color: Colors.white),
+        ),
       ),
       body: SafeArea(
         child: _loading

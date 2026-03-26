@@ -19,10 +19,12 @@ class _ExerciseCatalogScreenState extends State<ExerciseCatalogScreen> {
   final _searchCtrl = TextEditingController();
   bool _showFilters = false;
   String? _filterMuscle;
+  String? _filterSecondaryMuscle;
   String? _filterCategory;
   String? _filterDifficulty;
   final _scrollController = ScrollController();
   bool _showScrollTop = false;
+  final Set<String> _expandedIds = {};
 
   @override
   void initState() {
@@ -67,6 +69,10 @@ class _ExerciseCatalogScreenState extends State<ExerciseCatalogScreen> {
             e.musculosPrimarios?.toLowerCase() != _filterMuscle!.toLowerCase()) {
           return false;
         }
+        if (_filterSecondaryMuscle != null &&
+            e.musculosSecundarios?.toLowerCase() != _filterSecondaryMuscle!.toLowerCase()) {
+          return false;
+        }
         if (_filterCategory != null &&
             e.categoria?.toLowerCase() != _filterCategory!.toLowerCase()) {
           return false;
@@ -83,6 +89,7 @@ class _ExerciseCatalogScreenState extends State<ExerciseCatalogScreen> {
   void _clearFilters() {
     setState(() {
       _filterMuscle = null;
+      _filterSecondaryMuscle = null;
       _filterCategory = null;
       _filterDifficulty = null;
       _searchCtrl.clear();
@@ -92,6 +99,7 @@ class _ExerciseCatalogScreenState extends State<ExerciseCatalogScreen> {
 
   bool get _hasActiveFilters =>
       _filterMuscle != null ||
+      _filterSecondaryMuscle != null ||
       _filterCategory != null ||
       _filterDifficulty != null;
 
@@ -103,8 +111,19 @@ class _ExerciseCatalogScreenState extends State<ExerciseCatalogScreen> {
         .toSet();
   }
 
+  String? _getYouTubeVideoId(String? url) {
+    if (url == null || url.isEmpty) return null;
+    final uri = Uri.tryParse(url);
+    if (uri == null) return null;
+    if (uri.host.contains('youtube.com')) return uri.queryParameters['v'];
+    if (uri.host.contains('youtu.be')) return uri.pathSegments.isNotEmpty ? uri.pathSegments.first : null;
+    return null;
+  }
+
   void _showVideoModal(Ejercicio exercise) {
     if (exercise.urlVideo == null || exercise.urlVideo!.isEmpty) return;
+    final videoId = _getYouTubeVideoId(exercise.urlVideo);
+    final thumbnailUrl = videoId != null ? 'https://img.youtube.com/vi/$videoId/mqdefault.jpg' : null;
 
     showDialog(
       context: context,
@@ -113,11 +132,11 @@ class _ExerciseCatalogScreenState extends State<ExerciseCatalogScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (exercise.urlFoto != null)
+            if (thumbnailUrl != null || exercise.urlFoto != null)
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: Image.network(
-                  exercise.urlFoto!,
+                  thumbnailUrl ?? exercise.urlFoto!,
                   height: 150,
                   width: double.infinity,
                   fit: BoxFit.cover,
@@ -223,8 +242,7 @@ class _ExerciseCatalogScreenState extends State<ExerciseCatalogScreen> {
                 ),
 
                 // Filters
-                if (_showFilters)
-                  _buildFilters(theme),
+                if (_showFilters) _buildFilters(theme),
 
                 // Results count
                 Padding(
@@ -273,6 +291,7 @@ class _ExerciseCatalogScreenState extends State<ExerciseCatalogScreen> {
 
   Widget _buildFilters(ThemeData theme) {
     final muscles = _getUniqueValues((e) => e.musculosPrimarios);
+    final secondaryMuscles = _getUniqueValues((e) => e.musculosSecundarios);
     final categories = _getUniqueValues((e) => e.categoria);
     final difficulties = _getUniqueValues((e) => e.dificultad);
 
@@ -280,8 +299,12 @@ class _ExerciseCatalogScreenState extends State<ExerciseCatalogScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Column(
         children: [
-          _buildFilterChips('Músculo', muscles, _filterMuscle, (v) {
+          _buildFilterChips('Músculo Principal', muscles, _filterMuscle, (v) {
             setState(() => _filterMuscle = v);
+            _applyFilters();
+          }),
+          _buildFilterChips('Músculo Secundario', secondaryMuscles, _filterSecondaryMuscle, (v) {
+            setState(() => _filterSecondaryMuscle = v);
             _applyFilters();
           }),
           _buildFilterChips('Categoría', categories, _filterCategory, (v) {
@@ -347,6 +370,10 @@ class _ExerciseCatalogScreenState extends State<ExerciseCatalogScreen> {
   }
 
   Widget _buildExerciseItem(ThemeData theme, Ejercicio exercise) {
+    final isExpanded = _expandedIds.contains(exercise.id);
+    final videoId = _getYouTubeVideoId(exercise.urlVideo);
+    final thumbnailUrl = videoId != null ? 'https://img.youtube.com/vi/$videoId/mqdefault.jpg' : null;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
@@ -354,48 +381,163 @@ class _ExerciseCatalogScreenState extends State<ExerciseCatalogScreen> {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: theme.dividerColor.withAlpha(25)),
       ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        leading: Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            color: AppColors.primary.withAlpha(51),
-            borderRadius: BorderRadius.circular(10),
+      child: Column(
+        children: [
+          // Main row
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => context.go('/weekly/exercise/${exercise.id}'),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Row(
+                children: [
+                  // Thumbnail with video overlay
+                  GestureDetector(
+                    onTap: exercise.urlVideo != null && exercise.urlVideo!.isNotEmpty
+                        ? () => _showVideoModal(exercise)
+                        : null,
+                    child: SizedBox(
+                      width: 64,
+                      height: 44,
+                      child: Stack(
+                        children: [
+                          Container(
+                            width: 64,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withAlpha(51),
+                              borderRadius: BorderRadius.circular(8),
+                              image: (thumbnailUrl ?? exercise.urlFoto) != null
+                                  ? DecorationImage(
+                                      image: NetworkImage(thumbnailUrl ?? exercise.urlFoto!),
+                                      fit: BoxFit.cover,
+                                    )
+                                  : null,
+                            ),
+                            child: (thumbnailUrl ?? exercise.urlFoto) == null
+                                ? const Icon(Icons.fitness_center,
+                                    size: 20, color: AppColors.primary)
+                                : null,
+                          ),
+                          if (exercise.urlVideo != null && exercise.urlVideo!.isNotEmpty)
+                            Positioned.fill(
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.black26,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(Icons.play_circle_filled,
+                                    color: Colors.white, size: 22),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(exercise.titulo,
+                            style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                color: theme.textTheme.bodyLarge?.color)),
+                        Text(
+                          [exercise.musculosPrimarios, exercise.dificultad]
+                              .where((s) => s != null && s.isNotEmpty)
+                              .join(' · '),
+                          style: TextStyle(
+                              fontSize: 13, color: theme.textTheme.bodyMedium?.color),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: Icon(
+                      isExpanded ? Icons.expand_less : Icons.expand_more,
+                      color: theme.textTheme.bodyMedium?.color,
+                    ),
+                    onPressed: () => setState(() {
+                      if (isExpanded) {
+                        _expandedIds.remove(exercise.id);
+                      } else {
+                        _expandedIds.add(exercise.id);
+                      }
+                    }),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
+              ),
+            ),
           ),
-          child: exercise.urlFoto != null
-              ? ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.network(exercise.urlFoto!,
-                      fit: BoxFit.cover,
-                      errorBuilder: (ctx, error, stack) => const Icon(
-                          Icons.fitness_center,
-                          size: 20,
-                          color: AppColors.primary)),
-                )
-              : const Icon(Icons.fitness_center,
-                  size: 20, color: AppColors.primary),
-        ),
-        title: Text(exercise.titulo,
-            style: TextStyle(
-                fontWeight: FontWeight.w600,
-                color: theme.textTheme.bodyLarge?.color)),
-        subtitle: Text(
-          [exercise.grupoMuscular, exercise.dificultad]
-              .where((s) => s != null && s.isNotEmpty)
-              .join(' · '),
-          style: TextStyle(
-              fontSize: 13, color: theme.textTheme.bodyMedium?.color),
-        ),
-        trailing: exercise.urlVideo != null && exercise.urlVideo!.isNotEmpty
-            ? IconButton(
-                icon: const Icon(Icons.play_circle_outline,
-                    color: AppColors.primary),
-                onPressed: () => _showVideoModal(exercise),
-              )
-            : null,
-        onTap: () => context.go('/weekly/exercise/${exercise.id}'),
+          // Expanded content
+          if (isExpanded)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              decoration: BoxDecoration(
+                border: Border(top: BorderSide(color: theme.dividerColor.withAlpha(25))),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 12),
+                  if (exercise.descripcion != null && exercise.descripcion!.isNotEmpty) ...[
+                    Text(exercise.descripcion!,
+                        style: TextStyle(fontSize: 13, color: theme.textTheme.bodyMedium?.color)),
+                    const SizedBox(height: 10),
+                  ],
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      if (exercise.musculosPrimarios != null)
+                        _buildBadge(exercise.musculosPrimarios!, AppColors.primary),
+                      if (exercise.musculosSecundarios != null)
+                        _buildBadge(exercise.musculosSecundarios!, Colors.blueGrey),
+                      if (exercise.categoria != null)
+                        _buildBadge(exercise.categoria!, Colors.indigo),
+                      if (exercise.dificultad != null)
+                        _buildBadge(exercise.dificultad!, _difficultyColor(exercise.dificultad!)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
+  }
+
+  Widget _buildBadge(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withAlpha(30),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+
+  Color _difficultyColor(String difficulty) {
+    switch (difficulty.toLowerCase()) {
+      case 'fácil':
+      case 'facil':
+        return AppColors.success;
+      case 'intermedio':
+      case 'medio':
+        return AppColors.warning;
+      case 'difícil':
+      case 'dificil':
+      case 'avanzado':
+        return AppColors.error;
+      default:
+        return AppColors.primary;
+    }
   }
 }

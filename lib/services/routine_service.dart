@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:pressfit/models/rutina_semanal.dart';
 import 'package:pressfit/models/rutina_diaria.dart';
@@ -76,9 +77,13 @@ class RoutineService {
           ''')
           .eq('rutina_semanal_id', routineId)
           .eq('fecha_dia', fechaDia)
-          .single();
+          .order('created_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      if (data == null) return null;
       return RutinaDiaria.fromJson(data);
-    } catch (_) {
+    } catch (e) {
+      debugPrint('getRoutineDayByDate error: $e');
       return null;
     }
   }
@@ -99,9 +104,12 @@ class RoutineService {
           .eq('rutina_semanal_id', routineId)
           .eq('nombre_dia', nombreDia)
           .isFilter('fecha_dia', null)
-          .single();
+          .limit(1)
+          .maybeSingle();
+      if (data == null) return null;
       return RutinaDiaria.fromJson(data);
-    } catch (_) {
+    } catch (e) {
+      debugPrint('getRoutineDayByName error: $e');
       return null;
     }
   }
@@ -115,12 +123,18 @@ class RoutineService {
 
   static Future<List<RutinaSemanal>> getAllWeeklyRoutines(
       String userId) async {
-    final data = await _supabase
-        .from('rutinas_semanales')
-        .select()
-        .eq('usuario_id', userId)
-        .order('created_at', ascending: false);
-    return (data as List).map((r) => RutinaSemanal.fromJson(r)).toList();
+    try {
+      final data = await _supabase
+          .from('rutinas_semanales')
+          .select()
+          .eq('usuario_id', userId)
+          .order('created_at', ascending: false);
+      debugPrint('getAllWeeklyRoutines: got ${(data as List).length} routines');
+      return data.map((r) => RutinaSemanal.fromJson(r)).toList();
+    } catch (e) {
+      debugPrint('getAllWeeklyRoutines error: $e');
+      return [];
+    }
   }
 
   static Future<RutinaSemanal?> createWeeklyRoutine(
@@ -376,6 +390,97 @@ class RoutineService {
     }
 
     return newRoutine;
+  }
+
+  /// Get workout stats for a specific routine day (current week).
+  /// Returns exerciseCount, duration, isCompleted, startTime, endTime.
+  static Future<Map<String, dynamic>?> getWorkoutStatsForRoutineDay(
+    String userId,
+    String routineDayId,
+  ) async {
+    try {
+      // Get template day info
+      final templateDay = await getRoutineDayById(routineDayId);
+      if (templateDay == null) return null;
+
+      final startOfWeek = getMondayOfCurrentWeek();
+
+      // Find the most recent workout for this day name in current week
+      final data = await _supabase
+          .from('rutinas_diarias')
+          .select('''
+            *,
+            ejercicios_programados (
+              *,
+              ejercicio:ejercicios(*)
+            )
+          ''')
+          .eq('rutina_semanal_id', templateDay.rutinaSemanalId)
+          .eq('nombre_dia', templateDay.nombreDia)
+          .not('fecha_dia', 'is', null)
+          .gte('fecha_dia', startOfWeek)
+          .order('updated_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+
+      if (data == null) {
+        return {'exerciseCount': 0, 'duration': null, 'isCompleted': false};
+      }
+
+      final exercises = data['ejercicios_programados'] as List? ?? [];
+      final uniqueExerciseIds = exercises.map((e) => e['ejercicio_id']).toSet();
+
+      int? duration;
+      if (data['completada'] == true &&
+          data['hora_inicio'] != null &&
+          data['hora_fin'] != null) {
+        final start = DateTime.parse(data['hora_inicio'] as String);
+        final end = DateTime.parse(data['hora_fin'] as String);
+        final mins = end.difference(start).inMinutes;
+        if (mins >= 5) duration = mins;
+      }
+
+      return {
+        'exerciseCount': uniqueExerciseIds.length,
+        'duration': duration,
+        'isCompleted': data['completada'] == true,
+        'startTime': data['hora_inicio'],
+        'endTime': data['hora_fin'],
+      };
+    } catch (e) {
+      debugPrint('getWorkoutStatsForRoutineDay error: $e');
+      return {'exerciseCount': 0, 'duration': null, 'isCompleted': false};
+    }
+  }
+
+  /// Get the active (started but not completed) workout for a routine day.
+  static Future<Map<String, dynamic>?> getActiveWorkout(
+    String userId,
+    String routineDayId,
+  ) async {
+    try {
+      final templateDay = await getRoutineDayById(routineDayId);
+      if (templateDay == null) return null;
+
+      final startOfWeek = getMondayOfCurrentWeek();
+
+      final data = await _supabase
+          .from('rutinas_diarias')
+          .select('id, hora_inicio, hora_fin, completada, fecha_dia')
+          .eq('rutina_semanal_id', templateDay.rutinaSemanalId)
+          .eq('nombre_dia', templateDay.nombreDia)
+          .not('fecha_dia', 'is', null)
+          .gte('fecha_dia', startOfWeek)
+          .not('hora_inicio', 'is', null)
+          .eq('completada', false)
+          .limit(1)
+          .maybeSingle();
+
+      return data;
+    } catch (e) {
+      debugPrint('getActiveWorkout error: $e');
+      return null;
+    }
   }
 
   static Future<void> updateRoutineDayDescription(

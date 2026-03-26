@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:pressfit/models/ejercicio.dart';
 
@@ -5,9 +6,13 @@ class ExerciseService {
   static final _supabase = Supabase.instance.client;
 
   static Future<List<Ejercicio>> getExercises() async {
-    final data =
-        await _supabase.from('ejercicios').select().order('titulo');
-    return (data as List).map((e) => Ejercicio.fromJson(e)).toList();
+    try {
+      final data = await _supabase.from('ejercicios').select().order('titulo');
+      return (data as List).map((e) => Ejercicio.fromJson(e)).toList();
+    } catch (e) {
+      debugPrint('ExerciseService.getExercises error: $e');
+      rethrow;
+    }
   }
 
   static Future<Ejercicio?> getExerciseById(String id) async {

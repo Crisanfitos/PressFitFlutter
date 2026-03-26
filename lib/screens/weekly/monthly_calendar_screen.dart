@@ -46,14 +46,19 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
 
     try {
       final routines = await RoutineService.getAllWeeklyRoutines(userId);
+      debugPrint('Calendar: loaded ${routines.length} routines');
       if (!mounted) return;
       setState(() {
         _routines = routines;
         _selectedRoutine = routines.where((r) => r.activa).firstOrNull ?? routines.firstOrNull;
         _loading = false;
       });
-      _loadWorkoutStats();
-    } catch (_) {
+      if (_selectedRoutine != null) {
+        debugPrint('Calendar: selected routine "${_selectedRoutine!.nombre}" (${_selectedRoutine!.id})');
+        _loadWorkoutStats();
+      }
+    } catch (e) {
+      debugPrint('Calendar._loadRoutines error: $e');
       if (mounted) setState(() => _loading = false);
     }
   }
@@ -127,7 +132,9 @@ class _MonthlyCalendarScreenState extends State<MonthlyCalendarScreen> {
           _missedDays = missed;
         });
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('Calendar._loadWorkoutStats error: $e');
+    }
   }
 
   List<DateTime?> get _calendarDays {
